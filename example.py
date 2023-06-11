@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 import cv2
-import os
+
 from camera import Camera
 import structure
 import processor
@@ -61,16 +61,15 @@ def house():
     return points1, points2, intrinsic
 '''
 
-def obj(i1,i2):
-    img1 = cv2.imread(i1)
-    img2 = cv2.imread(i2)
+def dino(path1,path2):
+    # Dino
+    img1 = cv2.imread(path1)
+    img2 = cv2.imread(path2)
     pts1, pts2 = features.find_correspondence_points(img1, img2)
     points1 = processor.cart2hom(pts1)
     points2 = processor.cart2hom(pts2)
     
-    '''
     fig, ax = plt.subplots(1, 2)
-
     ax[0].autoscale_view('tight')
     ax[0].imshow(cv2.cvtColor(img1, cv2.COLOR_BGR2RGB))
     ax[0].plot(points1[0], points1[1], 'r.')
@@ -78,72 +77,68 @@ def obj(i1,i2):
     ax[1].imshow(cv2.cvtColor(img2, cv2.COLOR_BGR2RGB))
     ax[1].plot(points2[0], points2[1], 'r.')
     fig.show()
-    '''
-
+    
     height, width, ch = img1.shape
-
-    intrinsic = np.array([
+    intrinsic = np.array([  # for dino
         [2360, 0, width / 2],
         [0, 2360, height / 2],
         [0, 0, 1]])
 
-    return points1, points2,pts1, pts2, intrinsic
+    return points1, points2, intrinsic
 
-img_list1 = list()
-img_list2 = list()
-for name in os.listdir('imgs'):
-    img_list1.append('imgs/'+name)
-    img_list2.append('imgs/'+name)
-size = 0
-for i in range(len(img_list1)-1):
-    size+=i
-save_var = [None] * size * 2
-save_pts = [None] * size * 2
-#save_index = list()
-bool_flag = True
-#print(save.shape)
-count = 0
-for i1 in range(len(img_list1)):
-    img1 = img_list1[i1]
-    img_list2.remove(img1)
-    for i2 in range(len(img_list2)):
-        img2 = img_list2[i2]
-        points1, points2, pts1, pts2, intrinsic = obj(img1,img2)
-        if(bool_flag):
-            bool_flag=False
-            save_pts[count]=points1
-            save_var[count]=pts1
-            count=count+1
-            save_pts[count]=points2
-            save_var[count]=pts2
-            count=count+1
-        else:
-            #check pts
-            '''
-            to do:
-            check if there are >=2 elements of pts is in save_var for same image
-            save_var/save_pts: array of pts/points
-            [img1,img2, img1,img3, img1, img4, img2,img3, img2,img4, img3,img4]
-            if None or<2, continue
-            if >=2 save it to array as above
-            
-            maybe need to save which pair does it connect to?
-            '''
-            continue
+def rigid_transform_3D(A, B):
+    assert A.shape == B.shape
 
-#not finished
-for i in range(size):
-    if(save_pts[i*2]==None):
-        continue
-    points1=save_pts[i*2]
-    points2=save_pts[i*2+1]
+    num_rows, num_cols = A.shape
+    if num_rows != 3:
+        raise Exception(f"matrix A is not 3xN, it is {num_rows}x{num_cols}")
+
+    num_rows, num_cols = B.shape
+    if num_rows != 3:
+        raise Exception(f"matrix B is not 3xN, it is {num_rows}x{num_cols}")
+
+    # find mean column wise
+    centroid_A = np.mean(A, axis=1)
+    centroid_B = np.mean(B, axis=1)
+
+    # ensure centroids are 3x1
+    centroid_A = centroid_A.reshape(-1, 1)
+    centroid_B = centroid_B.reshape(-1, 1)
+
+    # subtract mean
+    Am = A - centroid_A
+    Bm = B - centroid_B
+
+    H = Am @ np.transpose(Bm)
+
+    # sanity check
+    #if linalg.matrix_rank(H) < 3:
+    #    raise ValueError("rank of H = {}, expecting 3".format(linalg.matrix_rank(H)))
+
+    # find rotation
+    U, S, Vt = np.linalg.svd(H)
+    R = Vt.T @ U.T
+
+    # special reflection case
+    if np.linalg.det(R) < 0:
+        print("det(R) < R, reflection detected!, correcting for it ...")
+        Vt[2,:] *= -1
+        R = Vt.T @ U.T
+
+    t = -R @ centroid_A + centroid_B
+
+    return R, t
+
+def start(path1,path2):
+    points1, points2, intrinsic = dino(path1,path2)
+
     # Calculate essential matrix with 2d points.
     # Result will be up to a scale
     # First, normalize points
     points1n = np.dot(np.linalg.inv(intrinsic), points1)
     points2n = np.dot(np.linalg.inv(intrinsic), points2)
     E = structure.compute_essential_normalized(points1n, points2n)
-    #print('Computed essential matrix:', (-E / E[0][1]))
+    print('Computed essential matrix:', (-E / E[0][1]))
 
     # Given we are at camera 1, calculate the parameters for camera 2
     # Using the essential matrix returns 4 possible camera paramters
@@ -167,13 +162,84 @@ for i in range(size):
     #tripoints3d = structure.reconstruct_points(points1n, points2n, P1, P2)
     tripoints3d = structure.linear_triangulation(points1n, points2n, P1, P2)
     '''
-    tranpose the tripoints3d to fit into the pair we got above then save all of them..
+    fig = plt.figure()
+    fig.suptitle('3D reconstructed', fontsize=16)
+    ax = fig.add_subplot(projection='3d')
+    #ax = fig.gca(projection='3d')
+    ax.plot(tripoints3d[0], tripoints3d[1], tripoints3d[2], 'b.')
+    ax.set_xlabel('x axis')
+    ax.set_ylabel('y axis')
+    ax.set_zlabel('z axis')
+    ax.view_init(elev=135, azim=90)
     '''
+    return tripoints3d, points1, points2
+
+p3_1, p21_1,p22_1 = start('imgs/viff.003.ppm','imgs/viff.001.ppm')
+p3_2, p21_2,p22_2 = start('imgs/viff.005.ppm','imgs/viff.001.ppm')
+pt2 = list()
+list_pts = list()
+for i in range(len(p22_1[0])):
+    pts = [p22_1[0][i],p22_1[1][i]]
+    pt2.append(pts)
+for i in range(len(p22_2[0])):
+    pts = [p22_2[0][i],p22_2[1][i]]
+    if pts in pt2:
+        list_pts.append(pts)
+        #print("find")
+#if len(list_pts)<3: #should be >2
+ind_p1 = list()
+ind_p2 = list()
+for pts in list_pts:
+    for i in range(len(p22_1[0])):
+        if(pts[0]==p22_1[0][i] and pts[1]==p22_1[1][i]):
+            ind_p1.append(i)
+            break
+    for i in range(len(p22_2[0])):
+        if(pts[0]==p22_2[0][i] and pts[1]==p22_2[1][i]):
+            ind_p2.append(i)
+            break
+
+#print(len(ind_p1))
+#print(len(ind_p2))
+
+pt3_a = [list(),list(),list()]
+pt3_b = [list(),list(),list()]
+
+for i in ind_p1:
+    pt3_a[0].append(p3_1[0][i])
+    pt3_a[1].append(p3_1[1][i])
+    pt3_a[2].append(p3_1[2][i])
+for i in ind_p2:
+    pt3_b[0].append(p3_2[0][i])
+    pt3_b[1].append(p3_2[1][i])
+    pt3_b[2].append(p3_2[2][i])
+
+R,t = rigid_transform_3D(np.array(pt3_a), np.array(pt3_b))
+
+pt31 = [list(),list(),list()]
+pt3 = [list(),list(),list()]
+for i in range(len(p3_1[0])):
+    pt31[0].append(p3_1[0][i])
+    pt31[1].append(p3_1[1][i])
+    pt31[2].append(p3_1[2][i])
+for i in range(len(p3_2[0])):
+    pt3[0].append(p3_2[0][i])
+    pt3[1].append(p3_2[1][i])
+    pt3[2].append(p3_2[2][i])
+
+newpt3 = R@pt31+t
+#print(newpt3)
+
+for i in range(len(newpt3[0])):
+    pt3[0].append(newpt3[0][i])
+    pt3[1].append(newpt3[1][i])
+    pt3[2].append(newpt3[2][i])
+
 fig = plt.figure()
 fig.suptitle('3D reconstructed', fontsize=16)
 ax = fig.add_subplot(projection='3d')
 #ax = fig.gca(projection='3d')
-ax.plot(tripoints3d[0], tripoints3d[1], tripoints3d[2], 'b.') #change this to the saved tripoints3d
+ax.plot(pt3[0], pt3[1], pt3[2], 'b.')
 ax.set_xlabel('x axis')
 ax.set_ylabel('y axis')
 ax.set_zlabel('z axis')
